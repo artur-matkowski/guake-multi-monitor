@@ -61,16 +61,61 @@ if [ -z "$TARGET_OUTPUT" ]; then
     exit 0
 fi
 
-# Get target monitor index for the given output name
-TARGET_INDEX=$(xrandr --listmonitors | grep -w "$TARGET_OUTPUT" | awk '{print $1}' | tr -d ':')
+#------------------------------------------------------------------------------
+# Caching: store slot→index mapping to avoid xrandr call on every invocation
+#------------------------------------------------------------------------------
+CACHE_DIR="${XDG_RUNTIME_DIR:-/tmp}/guake-monitor"
+CACHE_FILE="$CACHE_DIR/slot-${SLOT_NUM}.idx"
+
+if [ -f "$CACHE_FILE" ]; then
+    TARGET_INDEX=$(cat "$CACHE_FILE")
+else
+    TARGET_INDEX=$(xrandr --listmonitors | grep -w "$TARGET_OUTPUT" | awk '{print $1}' | tr -d ':')
+    if [ -n "$TARGET_INDEX" ]; then
+        mkdir -p "$CACHE_DIR"
+        echo "$TARGET_INDEX" > "$CACHE_FILE"
+    fi
+fi
 
 if [ -z "$TARGET_INDEX" ]; then
     notify-send "Guake" "Monitor $TARGET_OUTPUT not found" --icon=dialog-warning
     exit 1
 fi
 
-# Check if Guake is currently visible (outputs 1=visible, 0=hidden)
-IS_VISIBLE=$(guake --is-visible)
+#------------------------------------------------------------------------------
+# D-Bus helpers: direct calls to Guake avoid Python startup overhead
+#------------------------------------------------------------------------------
+GUAKE_DEST="org.guake3.RemoteControl"
+GUAKE_PATH="/org/guake3/RemoteControl"
+GUAKE_IFACE="org.guake3.RemoteControl"
+
+guake_is_visible() {
+    local result
+    result=$(gdbus call --session --dest "$GUAKE_DEST" \
+        --object-path "$GUAKE_PATH" \
+        --method "${GUAKE_IFACE}.get_visibility" 2>/dev/null)
+    # Returns "(1,)" for visible, "(0,)" for hidden
+    [[ "$result" == *"(1,"* ]] && echo 1 || echo 0
+}
+
+guake_show() {
+    gdbus call --session --dest "$GUAKE_DEST" \
+        --object-path "$GUAKE_PATH" \
+        --method "${GUAKE_IFACE}.show" >/dev/null 2>&1
+}
+
+guake_hide() {
+    gdbus call --session --dest "$GUAKE_DEST" \
+        --object-path "$GUAKE_PATH" \
+        --method "${GUAKE_IFACE}.hide" >/dev/null 2>&1
+}
+
+#------------------------------------------------------------------------------
+# Main logic
+#------------------------------------------------------------------------------
+
+# Check if Guake is currently visible
+IS_VISIBLE=$(guake_is_visible)
 
 # Get current monitor index where Guake is displayed
 CURRENT_INDEX=$(gsettings get guake.general display-n)
@@ -79,15 +124,15 @@ if [ "$IS_VISIBLE" -eq 1 ]; then
     # Guake is visible
     if [ "$CURRENT_INDEX" -eq "$TARGET_INDEX" ]; then
         # Same monitor - hide
-        guake --hide
+        guake_hide
     else
         # Different monitor - move (hide, change setting, show)
-        guake --hide
+        guake_hide
         gsettings set guake.general display-n "$TARGET_INDEX"
-        guake --show
+        guake_show
     fi
 else
     # Guake is hidden - show on target monitor
     gsettings set guake.general display-n "$TARGET_INDEX"
-    guake --show
+    guake_show
 fi

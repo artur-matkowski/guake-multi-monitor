@@ -1,0 +1,5 @@
+# Guake Monitor Cache Invalidation
+# Clears the slot→index cache when monitor configuration changes
+# Install to: /etc/udev/rules.d/85-guake-monitor-hotplug.rules
+
+ACTION=="change", KERNEL=="card0", SUBSYSTEM=="drm", RUN+="/usr/bin/systemctl start --no-block guake-monitor-hotplug.service"
