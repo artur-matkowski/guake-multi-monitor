@@ -3,4 +3,4 @@ Description=Clear Guake monitor cache on display hotplug
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'rm -f /run/user/*/guake-monitor/*.idx'
+ExecStart=/bin/sh -c 'rm -rf /run/user/*/guake-monitor'
